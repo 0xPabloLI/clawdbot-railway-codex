@@ -147,7 +147,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 
   <div class="card">
     <h2>Status</h2>
-    <div id="status">Loading…</div>
+    <div id="status">Loading...</div>
   </div>
 
   <div class="card">
@@ -174,16 +174,16 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     <h2>2) Optional: Channels</h2>
     <p class="muted">You can also add channels later inside Clawdbot, but this helps you get messaging working immediately.</p>
     <label>Telegram bot token (optional)</label>
-    <input id="telegramToken" type="password" placeholder="123456:ABC…" />
+    <input id="telegramToken" type="password" placeholder="123456:ABC..." />
 
     <label>Discord bot token (optional)</label>
     <input id="discordToken" type="password" placeholder="Bot token" />
 
     <label>Slack bot token (optional)</label>
-    <input id="slackBotToken" type="password" placeholder="xoxb-…" />
+    <input id="slackBotToken" type="password" placeholder="xoxb-..." />
 
     <label>Slack app token (optional)</label>
-    <input id="slackAppToken" type="password" placeholder="xapp-…" />
+    <input id="slackAppToken" type="password" placeholder="xapp-..." />
   </div>
 
   <div class="card">
@@ -211,7 +211,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         return;
       }
       const j = await res.json();
-      statusEl.textContent = j.configured ? 'Configured — open /clawdbot' : 'Not configured — run setup below';
+      statusEl.textContent = j.configured ? 'Configured - open /clawdbot' : 'Not configured - run setup below';
       renderAuth(j.authGroups);
     }
 
@@ -220,7 +220,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       for (const g of groups) {
         const opt = document.createElement('option');
         opt.value = g.value;
-        opt.textContent = g.label + (g.hint ? ' — ' + g.hint : '');
+        opt.textContent = g.label + (g.hint ? ' - ' + g.hint : '');
         authGroupEl.appendChild(opt);
       }
       authGroupEl.onchange = () => {
@@ -229,7 +229,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         for (const o of (sel?.options ?? [])) {
           const opt = document.createElement('option');
           opt.value = o.value;
-          opt.textContent = o.label + (o.hint ? ' — ' + o.hint : '');
+          opt.textContent = o.label + (o.hint ? ' - ' + o.hint : '');
           authChoiceEl.appendChild(opt);
         }
       };
@@ -247,7 +247,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         slackAppToken: document.getElementById('slackAppToken').value
       };
       const log = document.getElementById('log');
-      log.textContent = 'Running…\n';
+      log.textContent = 'Running...\n';
       const res = await fetch('/setup/api/run', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const text = await res.text();
       let j;
