@@ -33,13 +33,11 @@ function getEnvWithShim(primaryKey, deprecatedKey) {
   return deprecated;
 }
 
-// Railway deployments sometimes inject PORT=3000 by default. We want the wrapper to
-// reliably listen on 8080 unless explicitly overridden.
-//
-// Prefer OPENCLAW_PUBLIC_PORT (set in the Dockerfile / template) over PORT.
+// Railway should provide PORT from Public Networking.
+// Keep OPENCLAW_PUBLIC_PORT/CLAWDBOT_PUBLIC_PORT as backward-compatible fallbacks.
 const PORT = Number.parseInt(
-  getEnvWithShim("OPENCLAW_PUBLIC_PORT", "CLAWDBOT_PUBLIC_PORT") ??
-    process.env.PORT ??
+  process.env.PORT?.trim() ??
+    getEnvWithShim("OPENCLAW_PUBLIC_PORT", "CLAWDBOT_PUBLIC_PORT") ??
     "8080",
   10,
 );
@@ -394,8 +392,7 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   // This is intentionally minimal; later we can parse the CLI help output to stay perfectly in sync.
   const authGroups = [
     { value: "openai", label: "OpenAI", hint: "Codex OAuth + API key", options: [
-      { value: "codex-cli", label: "OpenAI Codex OAuth (Codex CLI)" },
-      { value: "openai-codex", label: "OpenAI Codex (ChatGPT OAuth)" },
+      { value: "openai-codex", label: "OpenAI Codex OAuth" },
       { value: "openai-api-key", label: "OpenAI API key" }
     ]},
     { value: "anthropic", label: "Anthropic", hint: "Claude Code CLI + API key", options: [
@@ -450,6 +447,10 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
 });
 
 function buildOnboardArgs(payload) {
+  const rawAuthChoice = payload.authChoice;
+  // Backward compatibility: map deprecated auth choice used by older UI payloads.
+  const authChoice = rawAuthChoice === "codex-cli" ? "openai-codex" : rawAuthChoice;
+
   const args = [
     "onboard",
     "--non-interactive",
@@ -472,8 +473,8 @@ function buildOnboardArgs(payload) {
     payload.flow || "quickstart"
   ];
 
-  if (payload.authChoice) {
-    args.push("--auth-choice", payload.authChoice);
+  if (authChoice) {
+    args.push("--auth-choice", authChoice);
 
     // Map secret to correct flag for common choices.
     const secret = (payload.authSecret || "").trim();
@@ -491,12 +492,12 @@ function buildOnboardArgs(payload) {
       "synthetic-api-key": "--synthetic-api-key",
       "opencode-zen": "--opencode-zen-api-key"
     };
-    const flag = map[payload.authChoice];
+    const flag = map[authChoice];
     if (flag && secret) {
       args.push(flag, secret);
     }
 
-    if (payload.authChoice === "token" && secret) {
+    if (authChoice === "token" && secret) {
       // This is the Anthropics setup-token flow.
       args.push("--token-provider", "anthropic", "--token", secret);
     }

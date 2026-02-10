@@ -27,20 +27,19 @@ In Railway Template Composer:
 
 Required:
 - `SETUP_PASSWORD` — user-provided password to access `/setup`
+- `PORT=8080` — must match the port configured in Public Networking
 
 Recommended:
 - `OPENCLAW_STATE_DIR=/data/.openclaw`
 - `OPENCLAW_WORKSPACE_DIR=/data/workspace`
-
-Optional:
-- `OPENCLAW_GATEWAY_TOKEN` — if not set, the wrapper generates one (not ideal). In a template, set it using a generated secret.
+- `OPENCLAW_GATEWAY_TOKEN` — treat as an admin secret
 
 Notes:
 - This template pins OpenClaw to a known-good version by default via Docker build arg `OPENCLAW_GIT_REF`.
 - **Backward compatibility:** The wrapper includes a shim for `CLAWDBOT_*` environment variables (logs a deprecation warning when used). `MOLTBOT_*` variables are **not** shimmed — this repo never shipped with MOLTBOT prefixes, so no existing deployments rely on them.
 
 4) Enable **Public Networking** (HTTP). Railway will assign a domain.
-   - This service is configured to listen on port `8080` (including custom domains).
+   - Configure Public Networking to use port `8080`.
 5) Deploy.
 
 Then:
@@ -73,6 +72,7 @@ docker run --rm -p 8080:8080 \
   -e SETUP_PASSWORD=test \
   -e OPENCLAW_STATE_DIR=/data/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
+  -e OPENCLAW_GATEWAY_TOKEN=replace-with-secret \
   -v $(pwd)/.tmpdata:/data \
   openclaw-railway-template
 
