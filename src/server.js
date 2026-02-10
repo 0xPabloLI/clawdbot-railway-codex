@@ -446,16 +446,15 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   });
 });
 
-function buildOnboardArgs(payload) {
+function buildOnboardArgs(payload, opts = {}) {
+  const interactive = Boolean(opts.interactive);
   const rawAuthChoice = payload.authChoice;
   // Backward compatibility: map deprecated auth choice used by older UI payloads.
   const authChoice = rawAuthChoice === "codex-cli" ? "openai-codex" : rawAuthChoice;
 
   const args = [
     "onboard",
-    "--non-interactive",
     "--accept-risk",
-    "--json",
     "--no-install-daemon",
     "--skip-health",
     "--workspace",
@@ -472,6 +471,10 @@ function buildOnboardArgs(payload) {
     "--flow",
     payload.flow || "quickstart"
   ];
+  if (!interactive) {
+    args.splice(1, 0, "--non-interactive");
+    args.splice(3, 0, "--json");
+  }
 
   if (authChoice) {
     args.push("--auth-choice", authChoice);
@@ -504,6 +507,16 @@ function buildOnboardArgs(payload) {
   }
 
   return args;
+}
+
+function shellQuote(s) {
+  const str = String(s ?? "");
+  return `'${str.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildInteractiveOnboardCommand(payload) {
+  const args = buildOnboardArgs(payload, { interactive: true });
+  return [OPENCLAW_NODE, OPENCLAW_ENTRY, ...args].map(shellQuote).join(" ");
 }
 
 function runCmd(cmd, args, opts = {}) {
@@ -545,8 +558,16 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
   const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
 
   let extra = "";
+  let interactiveCommand = null;
 
   const ok = onboard.code === 0 && isConfigured();
+  const needsInteractive = /requires interactive mode/i.test(onboard.output || "");
+  if (!ok && needsInteractive) {
+    interactiveCommand = buildInteractiveOnboardCommand(payload);
+    extra += `\n[hint] This auth flow requires an interactive terminal.\n`;
+    extra += `[hint] Run this in Railway Shell:\n${interactiveCommand}\n`;
+    extra += `[hint] After it succeeds, refresh /setup and continue.\n`;
+  }
 
   // Optional channel setup (only after successful onboarding, and only if the installed CLI supports it).
   if (ok) {
@@ -634,6 +655,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
   return res.status(ok ? 200 : 500).json({
     ok,
     output: `${onboard.output}${extra}`,
+    interactiveCommand,
   });
   } catch (err) {
     console.error("[/setup/api/run] error:", err);

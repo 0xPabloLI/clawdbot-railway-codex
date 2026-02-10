@@ -47,6 +47,17 @@ Then:
 - Complete setup
 - Visit `https://<your-app>.up.railway.app/` and `/openclaw`
 
+### OAuth note (ChatGPT/OpenAI)
+
+If setup output shows `OAuth requires interactive mode`, run the printed command in Railway Shell once:
+
+```bash
+railway shell
+# paste the command shown in /setup logs
+```
+
+After the command succeeds, go back to `/setup` and refresh.
+
 ## Getting chat tokens (so you don’t have to scramble)
 
 ### Telegram bot token

@@ -116,6 +116,9 @@
       var j;
       try { j = JSON.parse(text); } catch (_e) { j = { ok: false, output: text }; }
       logEl.textContent += (j.output || JSON.stringify(j, null, 2));
+      if (j.interactiveCommand) {
+        logEl.textContent += '\n\nInteractive command:\n' + j.interactiveCommand + '\n';
+      }
       return refreshStatus();
     }).catch(function (e) {
       logEl.textContent += '\nError: ' + String(e) + '\n';
