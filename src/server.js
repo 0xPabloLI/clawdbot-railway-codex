@@ -129,6 +129,8 @@ let gatewayProc = null;
 let gatewayStarting = null;
 let gcsClient = null;
 let gcsClientInitErrorLogged = false;
+let configBackupWatcherStarted = false;
+let lastConfigMtimeMs = null;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -241,6 +243,30 @@ function queueBackupUpload(reason) {
   void uploadBackupToGcs(reason).catch((err) => {
     console.error(`[backup] upload failed (${reason}): ${String(err)}`);
   });
+}
+
+function getConfigMtimeMs() {
+  try {
+    return fs.statSync(configPath()).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function startConfigBackupWatcher() {
+  if (configBackupWatcherStarted) return;
+  configBackupWatcherStarted = true;
+  lastConfigMtimeMs = getConfigMtimeMs();
+
+  const interval = setInterval(() => {
+    const current = getConfigMtimeMs();
+    if (current && lastConfigMtimeMs && current !== lastConfigMtimeMs) {
+      queueBackupUpload("config-file-change");
+    }
+    if (current) lastConfigMtimeMs = current;
+  }, 15_000);
+
+  interval.unref?.();
 }
 
 async function waitForGatewayReady(opts = {}) {
@@ -1125,6 +1151,7 @@ const server = app.listen(PORT, "0.0.0.0", () => {
     console.warn("[wrapper] WARNING: SETUP_PASSWORD is not set; /setup will error.");
   }
   // Don't start gateway unless configured; proxy will ensure it starts.
+  startConfigBackupWatcher();
 });
 
 server.on("upgrade", async (req, socket, head) => {
