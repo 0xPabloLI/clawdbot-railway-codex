@@ -34,6 +34,14 @@ Recommended:
 - `OPENCLAW_WORKSPACE_DIR=/data/workspace`
 - `OPENCLAW_GATEWAY_TOKEN` — treat as an admin secret
 
+Optional (auto backup to Google Cloud Storage on config changes):
+- `OPENCLAW_GCS_BACKUP_ENABLED=true`
+- `OPENCLAW_GCS_BACKUP_BUCKET=<your-gcs-bucket>`
+- `OPENCLAW_GCS_BACKUP_PREFIX=openclaw-backups` (optional)
+- `OPENCLAW_GCS_SERVICE_ACCOUNT_JSON=<single-line service account JSON>` (recommended on Railway)
+  - Alternative: `OPENCLAW_GCS_SERVICE_ACCOUNT_JSON_B64=<base64-json>`
+  - If neither is set, the app falls back to Application Default Credentials.
+
 Notes:
 - This template pins OpenClaw to a known-good version by default via Docker build arg `OPENCLAW_GIT_REF`.
 - **Backward compatibility:** The wrapper includes a shim for `CLAWDBOT_*` environment variables (logs a deprecation warning when used). `MOLTBOT_*` variables are **not** shimmed — this repo never shipped with MOLTBOT prefixes, so no existing deployments rely on them.
@@ -46,6 +54,22 @@ Then:
 - Visit `https://<your-app>.up.railway.app/setup`
 - Complete setup
 - Visit `https://<your-app>.up.railway.app/` and `/openclaw`
+
+## Automatic config backup to Google Cloud Storage
+
+When GCS backup variables are configured, the wrapper uploads a `.tar.gz` backup of:
+- `OPENCLAW_STATE_DIR`
+- `OPENCLAW_WORKSPACE_DIR`
+
+Backups are triggered after:
+- setup run (`/setup/api/run`)
+- raw config save (`/setup/api/config/raw`)
+- backup import (`/setup/import`)
+- setup reset (`/setup/api/reset`)
+
+GCS IAM needed for the service account:
+- `roles/storage.objectCreator` (minimum, write-only)
+- `roles/storage.objectViewer` (optional, if you also want to read/list from scripts)
 
 ### OAuth note (ChatGPT/OpenAI)
 

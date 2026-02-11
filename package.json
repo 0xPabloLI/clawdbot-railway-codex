@@ -12,6 +12,7 @@
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "express": "^5.1.0",
     "http-proxy": "^1.18.1",
     "tar": "^7.5.4"

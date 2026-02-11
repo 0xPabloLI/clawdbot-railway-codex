@@ -3,8 +3,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import express from "express";
+import { Storage } from "@google-cloud/storage";
 import httpProxy from "http-proxy";
 import * as tar from "tar";
 
@@ -51,6 +53,16 @@ const STATE_DIR =
 const WORKSPACE_DIR =
   getEnvWithShim("OPENCLAW_WORKSPACE_DIR", "CLAWDBOT_WORKSPACE_DIR") ||
   path.join(STATE_DIR, "workspace");
+
+const OPENCLAW_GCS_BACKUP_ENABLED =
+  (process.env.OPENCLAW_GCS_BACKUP_ENABLED?.trim().toLowerCase() ?? "true") !== "false";
+const OPENCLAW_GCS_BACKUP_BUCKET = process.env.OPENCLAW_GCS_BACKUP_BUCKET?.trim();
+const OPENCLAW_GCS_BACKUP_PREFIX =
+  process.env.OPENCLAW_GCS_BACKUP_PREFIX?.trim() || "openclaw-backups";
+const OPENCLAW_GCS_SERVICE_ACCOUNT_JSON =
+  process.env.OPENCLAW_GCS_SERVICE_ACCOUNT_JSON?.trim();
+const OPENCLAW_GCS_SERVICE_ACCOUNT_JSON_B64 =
+  process.env.OPENCLAW_GCS_SERVICE_ACCOUNT_JSON_B64?.trim();
 
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
@@ -115,9 +127,120 @@ function isConfigured() {
 
 let gatewayProc = null;
 let gatewayStarting = null;
+let gcsClient = null;
+let gcsClientInitErrorLogged = false;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function getBackupTarSpec() {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+
+  const stateAbs = path.resolve(STATE_DIR);
+  const workspaceAbs = path.resolve(WORKSPACE_DIR);
+
+  const dataRoot = "/data";
+  const underData = (p) => p === dataRoot || p.startsWith(dataRoot + path.sep);
+
+  let cwd = "/";
+  let paths = [stateAbs, workspaceAbs].map((p) => p.replace(/^\//, ""));
+
+  if (underData(stateAbs) && underData(workspaceAbs)) {
+    cwd = dataRoot;
+    paths = [
+      path.relative(dataRoot, stateAbs) || ".",
+      path.relative(dataRoot, workspaceAbs) || ".",
+    ];
+  }
+
+  return { cwd, paths };
+}
+
+function resolveGcsCredentials() {
+  if (OPENCLAW_GCS_SERVICE_ACCOUNT_JSON) {
+    return JSON.parse(OPENCLAW_GCS_SERVICE_ACCOUNT_JSON);
+  }
+  if (OPENCLAW_GCS_SERVICE_ACCOUNT_JSON_B64) {
+    const decoded = Buffer.from(OPENCLAW_GCS_SERVICE_ACCOUNT_JSON_B64, "base64").toString("utf8");
+    return JSON.parse(decoded);
+  }
+  return null;
+}
+
+function getGcsClient() {
+  if (gcsClient) return gcsClient;
+  if (!OPENCLAW_GCS_BACKUP_BUCKET) return null;
+
+  try {
+    const credentials = resolveGcsCredentials();
+    gcsClient = credentials
+      ? new Storage({ projectId: credentials.project_id, credentials })
+      : new Storage();
+    return gcsClient;
+  } catch (err) {
+    if (!gcsClientInitErrorLogged) {
+      console.error(`[backup] Failed to initialize GCS client: ${String(err)}`);
+      gcsClientInitErrorLogged = true;
+    }
+    return null;
+  }
+}
+
+function sanitizeBackupReason(reason) {
+  return String(reason || "config-change")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "config-change";
+}
+
+async function uploadBackupToGcs(reason) {
+  if (!OPENCLAW_GCS_BACKUP_ENABLED) return { ok: false, skipped: "disabled" };
+  if (!OPENCLAW_GCS_BACKUP_BUCKET) return { ok: false, skipped: "bucket-not-configured" };
+
+  const client = getGcsClient();
+  if (!client) return { ok: false, skipped: "gcs-client-not-available" };
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const objectName = `${OPENCLAW_GCS_BACKUP_PREFIX}/${stamp}-${sanitizeBackupReason(reason)}.tar.gz`;
+  const { cwd, paths } = getBackupTarSpec();
+  const file = client.bucket(OPENCLAW_GCS_BACKUP_BUCKET).file(objectName);
+
+  const readStream = tar.c(
+    {
+      gzip: true,
+      portable: true,
+      noMtime: true,
+      cwd,
+      onwarn: () => {},
+    },
+    paths,
+  );
+
+  const writeStream = file.createWriteStream({
+    resumable: false,
+    contentType: "application/gzip",
+    metadata: {
+      metadata: {
+        reason: String(reason || ""),
+        stateDir: STATE_DIR,
+        workspaceDir: WORKSPACE_DIR,
+        createdAt: new Date().toISOString(),
+      },
+    },
+  });
+
+  await pipeline(readStream, writeStream);
+  console.log(`[backup] uploaded: gs://${OPENCLAW_GCS_BACKUP_BUCKET}/${objectName}`);
+  return { ok: true, objectName };
+}
+
+function queueBackupUpload(reason) {
+  void uploadBackupToGcs(reason).catch((err) => {
+    console.error(`[backup] upload failed (${reason}): ${String(err)}`);
+  });
 }
 
 async function waitForGatewayReady(opts = {}) {
@@ -650,6 +773,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
     // Apply changes immediately.
     await restartGateway();
+    queueBackupUpload("setup-api-run");
   }
 
   return res.status(ok ? 200 : 500).json({
@@ -806,6 +930,7 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
     if (isConfigured()) {
       await restartGateway();
     }
+    queueBackupUpload("config-raw-save");
 
     res.json({ ok: true, path: p });
   } catch (err) {
@@ -827,6 +952,7 @@ app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
   // Keep credentials/sessions/workspace by default.
   try {
     fs.rmSync(configPath(), { force: true });
+    queueBackupUpload("setup-reset");
     res.type("text/plain").send("OK - deleted config file. You can rerun setup now.");
   } catch (err) {
     res.status(500).type("text/plain").send(String(err));
@@ -834,34 +960,13 @@ app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
 });
 
 app.get("/setup/export", requireSetupAuth, async (_req, res) => {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
-
   res.setHeader("content-type", "application/gzip");
   res.setHeader(
     "content-disposition",
     `attachment; filename="openclaw-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tar.gz"`,
   );
 
-  // Prefer exporting from a common /data root so archives are easy to inspect and restore.
-  // This preserves dotfiles like /data/.openclaw/openclaw.json.
-  const stateAbs = path.resolve(STATE_DIR);
-  const workspaceAbs = path.resolve(WORKSPACE_DIR);
-
-  const dataRoot = "/data";
-  const underData = (p) => p === dataRoot || p.startsWith(dataRoot + path.sep);
-
-  let cwd = "/";
-  let paths = [stateAbs, workspaceAbs].map((p) => p.replace(/^\//, ""));
-
-  if (underData(stateAbs) && underData(workspaceAbs)) {
-    cwd = dataRoot;
-    // We export relative to /data so the archive contains: .openclaw/... and workspace/...
-    paths = [
-      path.relative(dataRoot, stateAbs) || ".",
-      path.relative(dataRoot, workspaceAbs) || ".",
-    ];
-  }
+  const { cwd, paths } = getBackupTarSpec();
 
   const stream = tar.c(
     {
@@ -964,6 +1069,7 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
     if (isConfigured()) {
       await restartGateway();
     }
+    queueBackupUpload("setup-import");
 
     res.type("text/plain").send("OK - imported backup into /data and restarted gateway.\n");
   } catch (err) {
@@ -1006,6 +1112,15 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
   console.log(`[wrapper] gateway token: ${OPENCLAW_GATEWAY_TOKEN ? "(set)" : "(missing)"}`);
   console.log(`[wrapper] gateway target: ${GATEWAY_TARGET}`);
+  console.log(
+    `[wrapper] gcs backup: ${
+      OPENCLAW_GCS_BACKUP_ENABLED
+        ? OPENCLAW_GCS_BACKUP_BUCKET
+          ? `enabled (bucket=${OPENCLAW_GCS_BACKUP_BUCKET}, prefix=${OPENCLAW_GCS_BACKUP_PREFIX})`
+          : "disabled (missing OPENCLAW_GCS_BACKUP_BUCKET)"
+        : "disabled (OPENCLAW_GCS_BACKUP_ENABLED=false)"
+    }`,
+  );
   if (!SETUP_PASSWORD) {
     console.warn("[wrapper] WARNING: SETUP_PASSWORD is not set; /setup will error.");
   }
