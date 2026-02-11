@@ -71,8 +71,24 @@ RUN npm install --omit=dev && npm cache clean --force
 # Copy built openclaw
 COPY --from=openclaw-build /openclaw /openclaw
 
-# Provide an openclaw executable
-RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"' > /usr/local/bin/openclaw \
+# Provide an openclaw executable.
+# Also persist gog CLI state on /data so OAuth/watch survives redeploys.
+RUN printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'PERSIST_GOG_DIR="/data/.openclaw/gogcli"' \
+  'GOG_CONFIG_DIR="/root/.config/gogcli"' \
+  'mkdir -p "$PERSIST_GOG_DIR" /root/.config' \
+  'if [ -d "$GOG_CONFIG_DIR" ] && [ ! -L "$GOG_CONFIG_DIR" ]; then' \
+  '  cp -a "$GOG_CONFIG_DIR"/. "$PERSIST_GOG_DIR"/ 2>/dev/null || true' \
+  '  rm -rf "$GOG_CONFIG_DIR"' \
+  'fi' \
+  'ln -sfn "$PERSIST_GOG_DIR" "$GOG_CONFIG_DIR"' \
+  'if [ -f /data/.openclaw/gog-credentials.json ] && [ ! -f "$GOG_CONFIG_DIR/credentials.json" ]; then' \
+  '  cp /data/.openclaw/gog-credentials.json "$GOG_CONFIG_DIR/credentials.json"' \
+  'fi' \
+  'exec node /openclaw/dist/entry.js "$@"' \
+  > /usr/local/bin/openclaw \
   && chmod +x /usr/local/bin/openclaw
 
 COPY src ./src
