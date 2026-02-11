@@ -11,5 +11,8 @@ npm-debug.log*
 # Backup exports
 *.tar.gz
 
+# Local Google Cloud SDK install (developer machine only)
+google-cloud-sdk/
+
 # OS
 .DS_Store
