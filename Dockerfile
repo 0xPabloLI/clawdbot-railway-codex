@@ -47,6 +47,21 @@ RUN apt-get update \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
+# Gmail webhook automation depends on gog CLI (`gog` binary).
+# Download the latest gogcli release artifact for container architecture.
+RUN set -eux; \
+  ARCH="$(dpkg --print-architecture)"; \
+  case "$ARCH" in \
+    amd64) GOG_ARCH="amd64" ;; \
+    arm64) GOG_ARCH="arm64" ;; \
+    *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  TAG="$(curl -fsSL https://api.github.com/repos/steipete/gogcli/releases/latest | grep '\"tag_name\"' | head -n1 | sed -E 's/.*\"([^\"]+)\".*/\1/')"; \
+  VER="${TAG#v}"; \
+  URL="https://github.com/steipete/gogcli/releases/download/${TAG}/gogcli_${VER}_linux_${GOG_ARCH}.tar.gz"; \
+  curl -fsSL "$URL" | tar -xz -C /usr/local/bin; \
+  chmod +x /usr/local/bin/gog
+
 WORKDIR /app
 
 # Wrapper deps
